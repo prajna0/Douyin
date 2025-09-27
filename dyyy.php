@@ -2,46 +2,40 @@
 /**
  * 抖音无水印视频解析API服务
  * 
- * 该服务提供抖音视频的无水印解析功能，支持从抖音分享链接中提取视频ID，
- * 获取不同清晰度的视频资源链接，并返回视频相关统计信息（播放量、点赞数等）。
- * 系统采用缓存机制减少重复请求，提高响应速度并降低第三方API调用频率。
+ * 功能说明：
+ * 1. 提供抖音视频无水印解析功能，支持多清晰度视频获取
+ * 2. 集成API Key验证机制，仅允许授权访问
+ * 3. 实时获取视频播放量、点赞数等统计数据
+ * 4. 对视频URL、帧率等非实时数据进行缓存优化性能
  * 
- * 核心功能：
- * - 从抖音分享URL提取视频ID
- * - 获取多清晰度无水印视频播放链接
- * - 提供视频元数据（分辨率、帧率、文件大小）
- * - 返回视频统计信息（播放量、点赞、评论等）
- * - 实现数据缓存机制，提升性能
+ * 接口调用方式：
+ * GET请求，需携带参数：
+ * - key: 授权访问密钥(在配置区VALID_API_KEYS中定义)
+ * - url: 抖音视频分享链接
  * 
  * @author JiJiang
- * @version 2.2.0
+ * @version 2.3.1
  * @date 2025-09-27
  */
 
-// ======================
-// 配置区 - 请根据实际情况修改
-// ======================
-$TIKHUB_API_KEY = '请替换为你的TikHub API密钥'; // 从https://user.tikhub.io/zh-hans/users/api_keys获取
-$CACHE_DIR = __DIR__ . '/cache'; // 缓存目录路径
-$CACHE_EXPIRE_TIME = 1; // 缓存有效期(秒)，默认1分钟
-// ======================
-// 以下为核心代码，通常无需修改
-// ======================
+// 配置参数区
+$TIKHUB_API_KEY = '请替换为你的TikHub API密钥'; // Tikhub API密钥(从https://user.tikhub.io/zh-hans/users/api_keys获取)
+$CACHE_DIR = __DIR__ . '/cache'; // 缓存文件存储目录
+$CACHE_EXPIRE_TIME = 3600; // 缓存有效期(秒)，默认60分钟(仅缓存非实时数据)
+$VALID_API_KEYS = [          // 合法API密钥列表(支持多个)
+    'prajna',   
+    'test'  
+];
 
-// 设置跨域访问和响应格式
+// 基础响应头设置
 header('Access-Control-Allow-Origin: *');
 header('Content-Type: application/json; charset=utf-8');
 
 /**
- * 格式化播放量数字为易读格式
+ * 格式化播放量为易读格式
  * 
- * 将原始播放量数字转换为带有单位的字符串表示，支持以下格式：
- * - 小于1万：整数+千分位（如：1,234）
- * - 1万到1亿之间：保留两位小数+万单位（如：1.23万，1,000万）
- * - 1亿及以上：保留两位小数+亿单位（如：1.23亿，1,000.00亿）
- * 
- * @param int|float $count 原始播放量数字
- * @return string 格式化后的播放量字符串
+ * @param int|float $count 原始播放量数值
+ * @return string 格式化后的播放量(如：1.2万、3.5亿)
  */
 function formatPlayCount($count) {
     $count = (float)$count;
@@ -62,12 +56,9 @@ function formatPlayCount($count) {
 /**
  * 格式化文件大小为易读格式
  * 
- * 将字节数转换为带有合适单位的字符串表示（Bytes, KB, MB, GB, TB），
- * 保留指定精度的小数位数。
- * 
- * @param int $bytes 文件大小（字节）
- * @param int $precision 小数保留位数，默认2位
- * @return string 格式化后的文件大小字符串
+ * @param int $bytes 文件大小(字节)
+ * @param int $precision 小数保留位数
+ * @return string 格式化后的文件大小(如：2.5MB、1.3GB)
  */
 function formatFileSize($bytes, $precision = 2) {
     if ($bytes == 0) return '0 Bytes';
@@ -82,13 +73,10 @@ function formatFileSize($bytes, $precision = 2) {
 }
 
 /**
- * 获取远程文件的大小
- * 
- * 通过多种方式（CURL头请求、响应头解析、get_headers函数）获取远程文件的大小，
- * 并使用formatFileSize函数进行格式化。
+ * 获取远程文件大小
  * 
  * @param string $url 远程文件URL
- * @return string 格式化后的文件大小，获取失败时返回"未知大小"
+ * @return string 格式化后的文件大小，失败则返回"未知大小"
  */
 function getRemoteFileSize($url) {
     $result = curlRequest($url, [], null, true);
@@ -123,16 +111,13 @@ function getRemoteFileSize($url) {
 }
 
 /**
- * 通用CURL请求函数
- * 
- * 封装CURL操作，支持GET/POST请求、自定义请求头、头信息请求等功能，
- * 并返回响应内容和请求信息。
+ * 通用CURL请求工具
  * 
  * @param string $url 请求URL
  * @param array $headers 请求头信息数组
- * @param mixed $postData POST数据，为null时表示GET请求
+ * @param mixed $postData POST数据(为null时表示GET请求)
  * @param bool $isHeadRequest 是否仅请求头信息
- * @return array 包含'response'（响应内容）和'info'（请求信息）的数组
+ * @return array 包含响应内容(response)和请求信息(info)的数组
  */
 function curlRequest($url, $headers = [], $postData = null, $isHeadRequest = false) {
     $ch = curl_init($url);
@@ -161,7 +146,7 @@ function curlRequest($url, $headers = [], $postData = null, $isHeadRequest = fal
         curl_setopt($ch, CURLOPT_POSTFIELDS, $postData);
     }
     
-    // 执行请求并获取结果
+    // 执行请求并处理结果
     $response = curl_exec($ch);
     $info = curl_getinfo($ch);
     curl_close($ch);
@@ -177,10 +162,8 @@ if (!is_dir($CACHE_DIR)) {
 /**
  * 获取缓存文件路径
  * 
- * 根据视频ID生成对应的缓存文件路径
- * 
  * @param string $videoId 视频ID
- * @return string 缓存文件的完整路径
+ * @return string 缓存文件完整路径
  */
 function getCacheFilePath($videoId) {
     global $CACHE_DIR;
@@ -188,12 +171,10 @@ function getCacheFilePath($videoId) {
 }
 
 /**
- * 获取缓存数据
- * 
- * 检查指定视频ID的缓存是否存在且未过期，若有效则返回缓存数据
+ * 获取缓存数据(仅包含非实时数据)
  * 
  * @param string $videoId 视频ID
- * @return array|null 缓存数据数组，缓存无效时返回null
+ * @return array|null 缓存数据数组(缓存有效)，无效时返回null
  */
 function getCache($videoId) {
     global $CACHE_EXPIRE_TIME;
@@ -210,23 +191,19 @@ function getCache($videoId) {
 }
 
 /**
- * 设置缓存数据
- * 
- * 将视频解析数据写入缓存文件，包含时间戳用于过期判断
+ * 设置缓存数据(仅存储非实时数据)
  * 
  * @param string $videoId 视频ID
  * @param array $highQualityData 高清视频数据
- * @param array $statistics 视频统计数据
  * @param string $fps 视频帧率
  * @param int $width 视频宽度
  * @param int $height 视频高度
  * @return void
  */
-function setCache($videoId, $highQualityData, $statistics, $fps, $width, $height) {
+function setCache($videoId, $highQualityData, $fps, $width, $height) {
     $cacheData = [
         'timestamp' => time(),
         'highQualityData' => $highQualityData,
-        'statistics' => $statistics,
         'fps' => $fps,
         'width' => $width,
         'height' => $height
@@ -236,9 +213,7 @@ function setCache($videoId, $highQualityData, $statistics, $fps, $width, $height
 }
 
 /**
- * 清理过期缓存
- * 
- * 扫描缓存目录，删除所有超过有效期的缓存文件
+ * 清理过期缓存文件
  * 
  * @return void
  */
@@ -266,21 +241,19 @@ cleanExpiredCache();
 /**
  * 获取高清视频URL数据
  * 
- * 调用TikHub API获取指定视频ID的高清视频播放地址，优先使用缓存数据
- * 
  * @param string $videoId 视频ID
- * @return array 包含高清视频信息的数组，获取失败时返回空数组
+ * @return array 高清视频信息数组，失败时返回空数组
  */
 function getHighQualityVideoUrl($videoId) {
     global $TIKHUB_API_KEY;
     
-    // 尝试从缓存获取
+    // 尝试从缓存获取(视频URL信息)
     $cache = getCache($videoId);
     if ($cache && isset($cache['highQualityData'])) {
         return $cache['highQualityData'];
     }
     
-    // 调用API获取
+    // 调用API获取数据
     $apiUrl = "https://api.tikhub.dev/api/v1/douyin/web/fetch_video_high_quality_play_url?aweme_id={$videoId}";
     $result = curlRequest($apiUrl, [
         "Authorization: Bearer {$TIKHUB_API_KEY}",
@@ -298,21 +271,12 @@ function getHighQualityVideoUrl($videoId) {
 }
 
 /**
- * 获取视频统计信息
- * 
- * 调用TikHub API获取指定视频ID的统计数据（播放量、点赞数等），优先使用缓存
+ * 获取视频实时统计信息(播放量、点赞数等)
  * 
  * @param string $videoId 视频ID
- * @return array 包含视频统计信息的数组
+ * @return array 视频统计信息数组
  */
 function getVideoStatistics($videoId) {
-    // 尝试从缓存获取
-    $cache = getCache($videoId);
-    if ($cache && isset($cache['statistics'])) {
-        return $cache['statistics'];
-    }
-    
-    // 调用API获取
     global $TIKHUB_API_KEY;
     $apiUrl = "https://api.tikhub.dev/api/v1/douyin/app/v3/fetch_video_statistics?aweme_ids={$videoId}";
     $result = curlRequest($apiUrl, [
@@ -331,7 +295,7 @@ function getVideoStatistics($videoId) {
         }
     }
     
-    // 默认返回空统计数据
+    // 默认返回空统计数据结构
     return [
         'aweme_id' => $videoId,
         'play_count' => 0,
@@ -345,10 +309,8 @@ function getVideoStatistics($videoId) {
 /**
  * 获取抖音链接的最终跳转URL
  * 
- * 跟随抖音分享链接的重定向，获取最终的视频页面URL
- * 
  * @param string $url 抖音分享链接
- * @return string 最终跳转后的URL
+ * @return string 跳转后的最终URL
  */
 function getDyFinalUrl($url) {
     $userAgent = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148';
@@ -360,10 +322,8 @@ function getDyFinalUrl($url) {
 /**
  * 从抖音分享链接提取视频ID
  * 
- * 通过解析最终跳转URL，使用正则表达式提取视频ID
- * 
  * @param string $shareUrl 抖音分享链接
- * @return string|null 提取到的视频ID，失败时返回null
+ * @return string|null 提取到的视频ID，失败返回null
  */
 function extractDyId($shareUrl) {
     $finalUrl = getDyFinalUrl($shareUrl);
@@ -373,11 +333,9 @@ function extractDyId($shareUrl) {
 }
 
 /**
- * 构建API响应数组
+ * 构建API标准响应结构
  * 
- * 统一API响应格式，包含状态码、消息和数据三部分
- * 
- * @param int $code 状态码，200表示成功
+ * @param int $code 状态码(200表示成功)
  * @param string $msg 响应消息
  * @param array $data 响应数据
  * @return array 格式化的响应数组
@@ -391,10 +349,7 @@ function douyinResponse($code = 200, $msg = '解析成功', $data = []) {
 }
 
 /**
- * 获取视频清晰度列表
- * 
- * 从API返回数据中提取不同清晰度的视频播放链接，并整理成规范格式
- * 支持原画、1080P、720P、540P等多种清晰度
+ * 获取视频清晰度列表及统计信息
  * 
  * @param array $highQualityData 高清视频数据
  * @param array $item 视频详情数据
@@ -406,13 +361,14 @@ function douyinResponse($code = 200, $msg = '解析成功', $data = []) {
  */
 function getVideoQualityList($highQualityData, $item, $videoId, $fps, $width, $height) {
     $videoList = [];
+    // 获取实时统计数据
     $statistics = getVideoStatistics($videoId);
     $playCount = isset($statistics['play_count']) ? formatPlayCount($statistics['play_count']) : '未知';
     $fpsDesc = $fps ?: '未知';
     $resolutionDesc = $width && $height ? "{$width}×{$height}" : '未知分辨率';
     
     // 添加说明信息
-    $videoList[] = ['url' => 'javascript:void(0)', 'level' => "免责声明: 下载的视频仅供个人学习"];
+    $videoList[] = ['url' => 'javascript:void(0)', 'level' => "prajna's Douyin API"];
     $videoList[] = ['url' => 'javascript:void(0)', 'level' => "未经作者授权不得用于商业或非法途径"];
     $videoList[] = ['url' => 'javascript:void(0)', 'level' => "当前作品播放量: {$playCount}"];
     
@@ -544,8 +500,6 @@ function getVideoQualityList($highQualityData, $item, $videoId, $fps, $width, $h
 /**
  * 抖音视频解析主函数
  * 
- * 整合各个功能模块，完成从URL解析到视频信息提取的完整流程
- * 
  * @param string $inputUrl 抖音分享URL
  * @return array 格式化的API响应数组
  */
@@ -556,7 +510,7 @@ function parseDouyinContent($inputUrl) {
         return douyinResponse(201, '未能提取到视频ID');
     }
     
-    // 获取高清视频数据
+    // 获取高清视频数据(带缓存)
     $highQualityData = getHighQualityVideoUrl($videoId);
     $cache = getCache($videoId);
     
@@ -584,7 +538,7 @@ function parseDouyinContent($inputUrl) {
     $dataArr = json_decode(trim($jsonMatch[1]), true);
     $item = $dataArr['loaderData']['video_(id)/page']['videoInfoRes']['item_list'][0] ?? [];
     
-    // 提取视频元数据（帧率、宽高）
+    // 提取视频元数据(帧率、宽高)
     $fps = $cache['fps'] ?? '';
     $width = $cache['width'] ?? 0;
     $height = $cache['height'] ?? 0;
@@ -602,11 +556,11 @@ function parseDouyinContent($inputUrl) {
     $width = $width ?: '未知';
     $height = $height ?: '未知';
     
-    // 获取视频列表
+    // 获取视频列表和实时统计数据
     $videoData = getVideoQualityList($highQualityData, $item, $videoId, $fps, $width, $height);
     
-    // 更新缓存
-    setCache($videoId, $highQualityData, $videoData['statistics'], $fps, $width, $height);
+    // 更新缓存(仅存储非实时数据)
+    setCache($videoId, $highQualityData, $fps, $width, $height);
     
     // 构建返回结果
     $result = [
@@ -625,13 +579,28 @@ function parseDouyinContent($inputUrl) {
     return douyinResponse(200, '解析成功', $result);
 }
 
-// 处理请求参数并执行解析
-$inputUrl = $_GET['url'] ?? '';
-if (empty($inputUrl)) {
-    echo json_encode(douyinResponse(400, '缺少url参数'), JSON_UNESCAPED_UNICODE);
+// API Key验证逻辑
+$apiKey = $_GET['key'] ?? '';    // 获取请求中的API密钥
+$inputUrl = $_GET['url'] ?? '';  // 获取请求中的视频链接
+
+// 验证API密钥
+if (empty($apiKey)) {
+    echo json_encode(douyinResponse(400, '缺少必要的key参数'), JSON_UNESCAPED_UNICODE);
     exit;
 }
 
+if (!in_array($apiKey, $VALID_API_KEYS)) {
+    echo json_encode(douyinResponse(403, '无效的key参数，访问被拒绝'), JSON_UNESCAPED_UNICODE);
+    exit;
+}
+
+// 验证视频链接参数
+if (empty($inputUrl)) {
+    echo json_encode(douyinResponse(400, '缺少url参数，请在URL中添加 url=抖音分享链接'), JSON_UNESCAPED_UNICODE);
+    exit;
+}
+
+// 执行解析并返回结果
 $result = parseDouyinContent($inputUrl);
 echo json_encode($result, JSON_UNESCAPED_UNICODE);
 ?>
