@@ -21,7 +21,7 @@
 // ======================
 // 配置区 - 请根据实际情况修改
 // ======================
-$TIKHUB_API_KEY = '请替换为你的TikHub API密钥'; // 从https://tikhub.dev获取
+$TIKHUB_API_KEY = '请替换为你的TikHub API密钥'; // 从https://user.tikhub.io/zh-hans/users/api_keys获取
 $CACHE_DIR = __DIR__ . '/cache'; // 缓存目录路径
 $CACHE_EXPIRE_TIME = 1; // 缓存有效期(秒)，默认1分钟
 // ======================
