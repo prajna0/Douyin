@@ -25,7 +25,7 @@
 
 
 ## 配置步骤
-1. 下载并解压代码包，找到核心文件 `douyin_parser.php`
+1. 下载并解压代码包，找到核心文件 `dyyy.php`
 2. 打开文件，定位到**顶部配置区**，替换以下参数（仅需修改这3项，核心代码无需改动）：
    ```php
    <?php
@@ -44,10 +44,10 @@
 通过 **HTTP GET请求** 调用API，仅需传入抖音分享链接作为`url`参数，示例：
 ```
 # 格式
-http://你的服务器域名/douyin_parser.php?url=抖音分享链接
+http://你的服务器域名/dyyy.php?url=抖音分享链接
 
 # 实际示例
-http://example.com/douyin_parser.php?url=https://v.douyin.com/iJdX78k/
+http://example.com/dyyy.php?url=https://v.douyin.com/iJdX78k/
 ```
 
 ### 2. 抖音分享链接获取方式
