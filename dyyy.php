@@ -254,7 +254,7 @@ function getHighQualityVideoUrl($videoId) {
     }
     
     // 调用API获取数据
-    $apiUrl = "https://api.tikhub.dev/api/v1/douyin/web/fetch_video_high_quality_play_url?aweme_id={$videoId}";
+    $apiUrl = "https://api.tikhub.dev/api/v1/douyin/app/fetch_video_high_quality_play_url?aweme_id={$videoId}";
     $result = curlRequest($apiUrl, [
         "Authorization: Bearer {$TIKHUB_API_KEY}",
         'Content-Type: application/json'
