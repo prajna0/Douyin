@@ -14,8 +14,8 @@
  * - url: 抖音视频分享链接
  * 
  * @author JiJiang
- * @version 2.3.1
- * @date 2025-09-27
+ * @version 2.4.0
+ * @date 2026-08-15
  */
 
 // 配置参数区
@@ -148,10 +148,11 @@ function curlRequest($url, $headers = [], $postData = null, $isHeadRequest = fal
     
     // 执行请求并处理结果
     $response = curl_exec($ch);
+    $error = curl_error($ch);
     $info = curl_getinfo($ch);
     curl_close($ch);
     
-    return ['response' => $response, 'info' => $info];
+    return ['response' => $response, 'info' => $info, 'error' => $error];
 }
 
 // 确保缓存目录存在
@@ -239,35 +240,83 @@ function cleanExpiredCache() {
 cleanExpiredCache();
 
 /**
- * 获取高清视频URL数据
- * 
- * @param string $videoId 视频ID
- * @return array 高清视频信息数组，失败时返回空数组
+ * 兼容TikHub新旧响应及旧缓存结构，统一返回data内的视频数据。
+ *
+ * @param mixed $payload TikHub响应或缓存数据
+ * @return array 标准化后的视频数据
  */
-function getHighQualityVideoUrl($videoId) {
+function normalizeHighQualityData($payload) {
+    if (!is_array($payload)) return [];
+
+    if (isset($payload['data']) && is_array($payload['data'])) {
+        $payload = $payload['data'];
+    }
+
+    foreach (['original_video_url', 'video_data', 'play_url'] as $key) {
+        if (isset($payload[$key])) return $payload;
+    }
+
+    return [];
+}
+
+/**
+ * 获取高清视频URL数据
+ *
+ * @param string $videoId 视频ID
+ * @param string|null $error 上游错误信息
+ * @return array 标准化后的高清视频信息，失败时返回空数组
+ */
+function getHighQualityVideoUrl($videoId, &$error = null) {
     global $TIKHUB_API_KEY;
+    $error = null;
+
+    if (!$TIKHUB_API_KEY || strpos($TIKHUB_API_KEY, '请替换') !== false) {
+        $error = '服务器尚未配置TikHub API密钥';
+        return [];
+    }
     
     // 尝试从缓存获取(视频URL信息)
     $cache = getCache($videoId);
     if ($cache && isset($cache['highQualityData'])) {
-        return $cache['highQualityData'];
+        $cachedData = normalizeHighQualityData($cache['highQualityData']);
+        if ($cachedData) return $cachedData;
     }
     
     // 调用API获取数据
-    $apiUrl = "https://api.tikhub.dev/api/v1/douyin/web/fetch_video_high_quality_play_url?aweme_id={$videoId}";
+    $apiUrl = 'https://api.tikhub.io/api/v1/douyin/web/fetch_video_high_quality_play_url?' . http_build_query([
+        'aweme_id' => $videoId,
+        'region' => 'CN'
+    ]);
     $result = curlRequest($apiUrl, [
         "Authorization: Bearer {$TIKHUB_API_KEY}",
         'Content-Type: application/json'
     ]);
-    
-    if ($result['info']['http_code'] == 200) {
-        $data = json_decode($result['response'], true);
-        if (isset($data['data'])) {
-            return $data;
-        }
+
+    if ($result['response'] === false) {
+        $error = 'TikHub API请求失败' . ($result['error'] ? '：' . $result['error'] : '');
+        return [];
     }
-    
-    return [];
+
+    $data = json_decode($result['response'], true);
+    $httpCode = (int)($result['info']['http_code'] ?? 0);
+
+    if ($httpCode !== 200 || !is_array($data)) {
+        $error = 'TikHub API请求失败（HTTP ' . $httpCode . '）';
+        return [];
+    }
+
+    if (isset($data['code']) && (int)$data['code'] !== 200) {
+        $error = $data['message_zh'] ?? $data['message'] ?? ('TikHub API返回错误码 ' . $data['code']);
+        return [];
+    }
+
+    $normalizedData = normalizeHighQualityData($data);
+    if (!$normalizedData) {
+        $error = $data['message_zh'] ?? $data['message'] ?? 'TikHub API未返回视频数据';
+        return [];
+    }
+
+    return $normalizedData;
 }
 
 /**
@@ -278,7 +327,7 @@ function getHighQualityVideoUrl($videoId) {
  */
 function getVideoStatistics($videoId) {
     global $TIKHUB_API_KEY;
-    $apiUrl = "https://api.tikhub.dev/api/v1/douyin/app/v3/fetch_video_statistics?aweme_ids={$videoId}";
+    $apiUrl = "https://api.tikhub.io/api/v1/douyin/app/v3/fetch_video_statistics?aweme_ids={$videoId}";
     $result = curlRequest($apiUrl, [
         "Authorization: Bearer {$TIKHUB_API_KEY}",
         'Content-Type: application/json'
@@ -373,7 +422,7 @@ function getVideoQualityList($highQualityData, $item, $videoId, $fps, $width, $h
     $videoList[] = ['url' => 'javascript:void(0)', 'level' => "当前作品播放量: {$playCount}"];
     
     // 添加原画视频
-    $originalVideoUrl = $highQualityData['data']['original_video_url'] ?? '';
+    $originalVideoUrl = $highQualityData['original_video_url'] ?? '';
     if ($originalVideoUrl) {
         $fileSize = getRemoteFileSize($originalVideoUrl);
         $videoList[] = [
@@ -392,14 +441,16 @@ function getVideoQualityList($highQualityData, $item, $videoId, $fps, $width, $h
     ];
     
     // 从bit_rate中提取不同清晰度视频
-    if (isset($highQualityData['data']['video_data']['aweme_detail']['video']['bit_rate'])) {
-        $bitRates = $highQualityData['data']['video_data']['aweme_detail']['video']['bit_rate'];
+    if (isset($highQualityData['video_data']['aweme_detail']['video']['bit_rate'])) {
+        $bitRates = $highQualityData['video_data']['aweme_detail']['video']['bit_rate'];
         
         // 提取1080P视频
         foreach ($bitRates as $bitRate) {
-            if ($addedCount >= 1 || !isset($bitRate['play_addr']['url_list'][0]) || isset($resolutionMap['[1080P]'])) {
+            if ($addedCount >= 1 || isset($resolutionMap['[1080P]'])) {
                 break;
             }
+
+            if (!isset($bitRate['play_addr']['url_list'][0])) continue;
             
             if (strpos($bitRate['gear_name'] ?? '', $targetResolutions['[1080P]']['keyword']) !== false) {
                 $url = $bitRate['play_addr']['url_list'][0];
@@ -412,9 +463,11 @@ function getVideoQualityList($highQualityData, $item, $videoId, $fps, $width, $h
         
         // 提取720P视频
         foreach ($bitRates as $bitRate) {
-            if ($addedCount >= 2 || !isset($bitRate['play_addr']['url_list'][0]) || isset($resolutionMap['[720P]'])) {
+            if ($addedCount >= 2 || isset($resolutionMap['[720P]'])) {
                 break;
             }
+
+            if (!isset($bitRate['play_addr']['url_list'][0])) continue;
             
             if (strpos($bitRate['gear_name'] ?? '', $targetResolutions['[720P]']['keyword']) !== false) {
                 $url = $bitRate['play_addr']['url_list'][0];
@@ -427,9 +480,11 @@ function getVideoQualityList($highQualityData, $item, $videoId, $fps, $width, $h
         
         // 提取540P视频
         foreach ($bitRates as $bitRate) {
-            if ($addedCount >= 3 || !isset($bitRate['play_addr']['url_list'][0]) || isset($resolutionMap['[540P]'])) {
+            if ($addedCount >= 3 || isset($resolutionMap['[540P]'])) {
                 break;
             }
+
+            if (!isset($bitRate['play_addr']['url_list'][0])) continue;
             
             if (strpos($bitRate['gear_name'] ?? '', $targetResolutions['[540P]']['keyword']) !== false) {
                 $url = $bitRate['play_addr']['url_list'][0];
@@ -442,8 +497,8 @@ function getVideoQualityList($highQualityData, $item, $videoId, $fps, $width, $h
     }
     
     // 从play_url中补充不同清晰度视频
-    if ($addedCount < 3 && isset($highQualityData['data']['play_url']['url_list'])) {
-        $playUrls = $highQualityData['data']['play_url']['url_list'];
+    if ($addedCount < 3 && isset($highQualityData['play_url']['url_list'])) {
+        $playUrls = $highQualityData['play_url']['url_list'];
         $fileSize = getRemoteFileSize($playUrls[0] ?? '');
         
         if (!isset($resolutionMap['[1080P]']) && count($playUrls) >= 1) {
@@ -511,7 +566,8 @@ function parseDouyinContent($inputUrl) {
     }
     
     // 获取高清视频数据(带缓存)
-    $highQualityData = getHighQualityVideoUrl($videoId);
+    $highQualityError = null;
+    $highQualityData = getHighQualityVideoUrl($videoId, $highQualityError);
     $cache = getCache($videoId);
     
     // 获取抖音页面数据
@@ -525,31 +581,38 @@ function parseDouyinContent($inputUrl) {
     
     $pageResult = curlRequest("https://www.iesdouyin.com/share/video/{$videoId}", $headers);
     $html = $pageResult['response'];
-    
-    if (!$html) {
-        return douyinResponse(201, '请求抖音页面失败，备用清晰度不可用');
+    $item = [];
+
+    // 页面数据仅作为备用来源；即使页面结构变化，也不影响TikHub原画结果。
+    if ($html && preg_match('/window\.(?:_ROUTER_DATA|_RENDER_DATA)\s*=\s*(.*?);?\s*<\/script>/s', $html, $jsonMatch)) {
+        $jsonText = trim($jsonMatch[1]);
+        $dataArr = json_decode($jsonText, true);
+        if (!is_array($dataArr)) {
+            $dataArr = json_decode(urldecode($jsonText), true);
+        }
+        if (is_array($dataArr)) {
+            $item = $dataArr['loaderData']['video_(id)/page']['videoInfoRes']['item_list'][0] ?? [];
+        }
     }
-    
-    // 解析页面数据
-    if (!preg_match('/window\.(?:_ROUTER_DATA|_RENDER_DATA)\s*=\s*(.*?);?\s*<\/script>/s', $html, $jsonMatch)) {
-        return douyinResponse(201, '未能解析视频页面数据，备用清晰度不可用');
-    }
-    
-    $dataArr = json_decode(trim($jsonMatch[1]), true);
-    $item = $dataArr['loaderData']['video_(id)/page']['videoInfoRes']['item_list'][0] ?? [];
     
     // 提取视频元数据(帧率、宽高)
     $fps = $cache['fps'] ?? '';
     $width = $cache['width'] ?? 0;
     $height = $cache['height'] ?? 0;
     
-    if (!$cache && !empty($highQualityData)) {
-        $bitRateList = $highQualityData['data']['video_data']['aweme_detail']['video']['bit_rate'] ?? [];
-        $fps = $bitRateList[0]['FPS'] ?? '';
+    if (!empty($highQualityData)) {
+        $bitRateList = $highQualityData['video_data']['aweme_detail']['video']['bit_rate'] ?? [];
+        if (!$fps || $fps === '未知') {
+            $fps = $bitRateList[0]['FPS'] ?? '';
+        }
         
-        $videoInfo = $highQualityData['data']['video_data']['aweme_detail']['video'] ?? [];
-        $width = $videoInfo['width'] ?? 0;
-        $height = $videoInfo['height'] ?? 0;
+        $videoInfo = $highQualityData['video_data']['aweme_detail']['video'] ?? [];
+        if (!$width || $width === '未知') {
+            $width = $videoInfo['width'] ?? 0;
+        }
+        if (!$height || $height === '未知') {
+            $height = $videoInfo['height'] ?? 0;
+        }
     }
     
     $fps = $fps ?: '未知';
@@ -558,9 +621,21 @@ function parseDouyinContent($inputUrl) {
     
     // 获取视频列表和实时统计数据
     $videoData = getVideoQualityList($highQualityData, $item, $videoId, $fps, $width, $height);
+
+    $playableVideos = array_filter($videoData['videoList'], function ($video) {
+        $url = $video['url'] ?? '';
+        return is_string($url) && preg_match('#^https?://#i', $url);
+    });
+
+    if (!$playableVideos) {
+        $reason = $highQualityError ?: 'TikHub和抖音页面均未返回可用的视频地址';
+        return douyinResponse(502, '解析失败：' . $reason . '。请检查服务器端TIKHUB_API_KEY、TikHub余额及缓存后重试');
+    }
     
-    // 更新缓存(仅存储非实时数据)
-    setCache($videoId, $highQualityData, $fps, $width, $height);
+    // 仅缓存有效视频数据，避免上游失败后持续命中空缓存。
+    if ($highQualityData) {
+        setCache($videoId, $highQualityData, $fps, $width, $height);
+    }
     
     // 构建返回结果
     $result = [
