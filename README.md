@@ -26,7 +26,7 @@
 
 2. 配置参数（在代码顶部配置区）
    ```php
-   // 替换为你的Tikhub API密钥（从https://tikhub.dev获取）
+   // 替换为你的TikHub API密钥（从https://user.tikhub.io/zh-hans/users/api_keys获取）
    $TIKHUB_API_KEY = '你的Tikhub API密钥';
    
    // 配置允许访问的API Key列表
@@ -61,6 +61,8 @@ GET请求
 |--------|------|------|
 | key    | 是   | 授权API密钥（在配置区VALID_API_KEYS中定义） |
 | url    | 是   | 抖音视频分享链接（如：https://v.douyin.com/xxxx/） |
+
+> `key` 是部署者自行设置的访问口令，只负责保护本项目接口；它不是 TikHub API Key。真正请求原画的是服务器端 `$TIKHUB_API_KEY`，两者不要混用。
 
 ### 调用示例
 
@@ -145,6 +147,21 @@ https://你的域名/dyyy.php?key=prajna&url=https://v.douyin.com/xxxx/
 | CACHE_DIR | 缓存文件存储目录，默认值：`__DIR__ . '/cache'` |
 | CACHE_EXPIRE_TIME | 缓存有效期（秒），默认60分钟（3600秒） |
 | VALID_API_KEYS | 允许访问的API密钥列表，可配置多个 |
+
+## 常见问题
+
+### 返回“解析成功”，但 `video_list` 只有说明文字
+
+旧版本会吞掉 TikHub 的鉴权、余额不足或空数据错误，并错误返回 `code: 200`。v2.4.0 起会返回明确的 `code: 502` 和失败原因。
+
+请按以下顺序检查：
+
+1. `$TIKHUB_API_KEY` 已替换为部署者自己的 TikHub Bearer Token，而不是请求参数中的 `key`
+2. TikHub 账户有可用余额；“最高画质播放链接”是 TikHub 计费接口
+3. 删除对应的旧缓存文件，或清空 `cache` 目录后重试
+4. 服务器可以访问 `https://api.tikhub.io`
+
+普通调用者无需向本项目“充值”；如果调用的是别人部署的接口，需要联系部署者检查其服务器端 TikHub Key 和余额。
 
 ## 注意事项
 
